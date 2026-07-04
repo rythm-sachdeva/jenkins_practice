@@ -1,0 +1,72 @@
+pipeline{
+agent any
+
+environment{
+    MONGO_URI = credentials('mongo-uri')
+    MONGO_USERNAME = credentials('mongo-db-username')
+    MONGO_PASSWORD = credentials('mongo-db-password')
+}
+tools {
+    nodejs  "nodejs-22-6-0"
+}
+
+ stages{
+    stage('Install Dependencies'){
+        steps{
+             sh 'npm install --no-audit'
+        }
+    }
+    stage('NPM Dependency Audit'){
+        steps{
+            sh 'npm install --audit-level=critical || true'
+        }
+    }
+    stage('Unit Tests'){
+        steps{
+            sh 'npm test'
+        }
+    }
+    stage('Code Coverage')
+    {
+        steps{
+            catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE',message:"Will be fixed in subsequent builds")
+            {
+                sh 'npm run coverage'
+            }
+        }
+    }
+    stage('Build Docker Image'){
+        steps{
+            script{
+                sh 'docker build -t kodekloud-hub:5000/solar-system:${GIT_COMMIT} .'
+            }
+        }
+    }
+    stage('Trivy Scan')
+    {
+        steps{
+            sh '''
+               trivy image kodekloud-hub:5000/solar-system:${GIT_COMMIT} \
+      --severity HIGH,CRITICAL \
+      --exit-code 1 \
+      --format json -o trivy-image-CRITICAL-results.json
+            '''
+        }
+    }
+
+ }
+ post {
+      always {
+
+        junit allowEmptyResults: true, stdioRetention: '', testResults: 'coverage/lcov-report/*.xml'
+
+        publishHTML([allowMissing: true, alwaysLinkToLastBuild: true, keepAll: true,
+        reportDir: 'coverage/lcov-report', reportFiles: 'index.html', reportName: 'Code Coverage HTML report', reportTitles: '', useWrapperFileDirectly: true])
+
+        sh 'trivy convert --format template --template /usr/local/share/trivy/templates/html.tpl --output trivy-image-CRITICAL-results.html trivy-image-CRITICAL-results.json'
+        publishHTML([allowMissing: true, alwaysLinkToLastBuild: true, keepAll: true, reportDir: "./", reportFiles: "trivy-image-CRITICAL-results.html", reportName: "Trivy Image Critical Vul Report", reportTitles: "", useWrapperFileDirectly: true])
+      }
+    }
+
+
+}

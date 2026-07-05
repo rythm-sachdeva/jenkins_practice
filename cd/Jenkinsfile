@@ -53,6 +53,56 @@ tools {
             '''
         }
     }
+    stage('Localstack Aws S3')
+    {
+        when {
+            expression {return env.GIT_BRANCH == ~ /feature\/.*/}
+        }
+
+        steps{
+            withAws(credentials:'localstack-aws-credentials',endpointUrl: 'http://localhost:4566', region:'us-east-1'){
+                sh '''
+                ls -ltr 
+                mkdir reports-$BUILD_ID
+                cp -rf coverage/ reports-$BUILD_ID
+                cp test-results.xml trivy*.* reports-$BUILD_ID/
+                ls -ltr reports-$BUILD_ID/
+                '''
+            }
+            s3Upload(file:"reports-$BUILD_ID",
+            bucket:'solar-system-jenkins-reports-bucket',
+            path:"reports-$BUILD_ID",
+            pathStyleAccessEnabled: true
+            )
+        }
+    }
+
+    stage("Deploy to VM")
+    {
+        when {
+            expression {return env.GIT_BRANCH == ~ /feature\/.*/}
+        }
+        steps{
+            script{
+                sshagent(['solar-system-jenkins-ssh-credentials']) {
+                    sh '''
+                    ssh -o StrictHostKeyChecking=no -i root@node01 "
+                    if sudo docker ps -a | grep -q 'solar-system': then
+                        echo 'Stopping existing solar-system container...'
+                        sudo docker stop 'solar-system' && sudo docker rm 'solar-system'
+                        echo 'container stopped and removed successfully.'
+                    fi
+                    sudo docker run --name solar-system 
+                    -e MONGO_URI=$MONGO_URI \
+                    -e MONGO_USERNAME=$MONGO_USERNAME \
+                    -e MONGO_PASSWORD=$MONGO_PASSWORD \
+                    -p 3000:3000 -d kodekloud-hub:5000/solar-system:$GIT_COMMIT
+
+                    '''
+                }
+            }
+        }
+    }
 
  }
  post {

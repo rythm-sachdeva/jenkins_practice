@@ -1,0 +1,41 @@
+pipeline{
+  agent{
+    kubernetes {
+        label 'gradle'
+        yaml """
+        apiVersion: v1
+        kind: Pod
+        spec:
+            containers:
+            - name: gradle
+              image: gradle:6.5.1
+              command: ['cat']
+              tty: true
+        """
+    }
+  }
+  stages
+  {
+    stage("build")
+    {
+        steps{
+            container('gradle')
+            {
+                sh 'gradle clean check'
+            }
+        }
+    }
+
+  }
+
+  post{
+    always{
+        junit testResults: "**/test-results/test/TEST-*.xml"
+
+        recordIssues(enabledForFailure: true, tools:[checkStyle(pattern: '**/build/reports/checkstyle/*.xml')],
+        qualityGates: [[threshold: 1, type: 'TOTAL', unstable: true]]
+        )
+        
+    }
+  }
+}
